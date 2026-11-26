@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Kestrel Sortie — low-level strike flying</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b2a2a'/%3E%3Cpath d='M16 5l3 9 8 2-8 2-3 9-3-9-8-2 8-2z' fill='%237dffe0'/%3E%3C/svg%3E" />
+<style>
+  :root {
+    --ink: #e8f4f2;
+    --dim: #9fb6b3;
+    --amber: #ffb347;
+    --teal: #7dffe0;
+    --panel: rgba(9, 18, 22, 0.82);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #06131a;
+    font-family: "Avenir Next", "Inter", "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink); user-select: none;
+  }
+  #scene, #hud { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #hud { pointer-events: none; }
+  #ui { position: fixed; inset: 0; pointer-events: none; }
+  #ui .screen {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; pointer-events: auto;
+    transition: opacity .35s ease;
+  }
+  #ui .hidden { opacity: 0; pointer-events: none; }
+  .veil {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(1200px 700px at 50% 62%, rgba(6, 26, 34, 0.15), rgba(3, 10, 14, 0.9) 78%),
+      linear-gradient(180deg, rgba(4, 12, 16, 0.35), rgba(4, 12, 16, 0.82));
+  }
+  .wrap { position: relative; width: min(1040px, 92vw); }
+  .kicker {
+    font-size: 12px; letter-spacing: .34em; text-transform: uppercase;
+    color: var(--teal); opacity: .85; margin-bottom: 14px;
+  }
+  h1 {
+    font-size: clamp(42px, 7.4vw, 92px); line-height: .9; margin: 0 0 6px;
+    letter-spacing: .015em; font-weight: 800; text-transform: uppercase;
+    background: linear-gradient(180deg, #ffffff 10%, #bfe9e2 62%, #7fa8a4 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 18px 60px rgba(0, 0, 0, .55);
+  }
+  h1 .thin { font-weight: 300; letter-spacing: .22em; }
+  .tagline { color: var(--dim); font-size: 15px; letter-spacing: .06em; margin: 10px 0 26px; max-width: 620px; line-height: 1.6; }
+  .missions { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 26px; }
+  .card {
+    flex: 1 1 220px; min-width: 200px; padding: 16px 18px 14px; border-radius: 12px;
+    background: var(--panel); border: 1px solid rgba(125, 255, 224, .16);
+    cursor: pointer; transition: transform .16s ease, border-color .16s ease, background .16s ease;
+    backdrop-filter: blur(9px);
+  }
+  .card:hover, .card:focus-visible { transform: translateY(-3px); border-color: rgba(125, 255, 224, .6); outline: none; }
+  .card.sel { border-color: var(--teal); background: rgba(16, 46, 48, .9); }
+  .card .num { font-size: 11px; letter-spacing: .28em; color: var(--amber); }
+  .card h3 { margin: 8px 0 6px; font-size: 17px; letter-spacing: .04em; }
+  .card p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--dim); }
+  .go {
+    display: inline-flex; align-items: center; gap: 14px; padding: 15px 30px; border-radius: 999px;
+    background: linear-gradient(180deg, #b6ffe9, #4fe0bd); color: #052024; border: none;
+    font-weight: 800; letter-spacing: .16em; font-size: 13px; text-transform: uppercase; cursor: pointer;
+    box-shadow: 0 12px 34px rgba(60, 230, 190, .28);
+  }
+  .go:hover { filter: brightness(1.07); }
+  .go kbd { background: rgba(3, 26, 22, .16); border-radius: 5px; padding: 2px 7px; font-size: 11px; letter-spacing: .1em; }
+  .keys { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 30px; font-size: 11.5px; color: var(--dim); letter-spacing: .05em; }
+  .keys b { color: var(--ink); font-weight: 600; }
+  .keys span { display: inline-block; padding: 3px 7px; margin-right: 6px; border-radius: 5px; background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .1); color: #dfefec; }
+  .foot { position: absolute; bottom: 18px; width: min(1040px, 92vw); display: flex; justify-content: space-between; font-size: 11px; color: rgba(159, 182, 179, .7); letter-spacing: .18em; text-transform: uppercase; }
+  .debrief { padding: 30px 34px; border-radius: 16px; background: var(--panel); border: 1px solid rgba(125, 255, 224, .2); width: min(620px, 92vw); backdrop-filter: blur(10px); }
+  .debrief h2 { margin: 0 0 4px; font-size: 30px; letter-spacing: .04em; }
+  .debrief .sub { color: var(--amber); letter-spacing: .26em; font-size: 11px; text-transform: uppercase; }
+  .rows { margin: 22px 0 24px; border-top: 1px solid rgba(255, 255, 255, .1); }
+  .row { display: flex; justify-content: space-between; padding: 10px 2px; border-bottom: 1px solid rgba(255, 255, 255, .07); font-size: 13.5px; }
+  .row span:first-child { color: var(--dim); letter-spacing: .08em; text-transform: uppercase; font-size: 11.5px; }
+  .row b { font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+  .pause { text-align: center; }
+  .pause h2 { font-size: 44px; letter-spacing: .18em; margin: 0 0 10px; font-weight: 700; }
+  .pause p { color: var(--dim); letter-spacing: .1em; }
+  .loading { position: absolute; inset: 0; display: grid; place-items: center; background: #06131a; font-size: 12px; letter-spacing: .3em; color: var(--teal); transition: opacity .5s; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<canvas id="hud"></canvas>
+<div id="ui">
+  <div id="title" class="screen">
+    <div class="veil"></div>
+    <div class="wrap">
+      <div class="kicker">make.fun · flight trials</div>
+      <h1>Kestrel<br /><span class="thin">Sortie</span></h1>
+      <p class="tagline">A single turboprop, an archipelago, and one long afternoon of flying.
+        Fillet the ridges, thread the gates, put the bird back on the tarmac. Every sortie is
+        hand-flown: throttle, stick, rudder, and an instrument panel that does not forgive a
+        sloppy turn.</p>
+      <div class="missions" id="missionList"></div>
+      <button class="go" id="startBtn">Launch <kbd>Enter</kbd></button>
+      <div class="keys">
+        <div><span>W / S</span><b>Throttle</b></div>
+        <div><span>↑ ↓ ← →</span><b>Stick</b></div>
+        <div><span>Q / E</span><b>Rudder</b></div>
+        <div><span>C</span><b>Camera</b></div>
+        <div><span>G</span><b>Gear</b></div>
+        <div><span>F</span><b>Flaps</b></div>
+        <div><span>Space</span><b>Gun</b></div>
+        <div><span>B</span><b>Brakes</b></div>
+        <div><span>P</span><b>Pause</b></div>
+      </div>
+    </div>
+    <div class="foot"><span>Kestrel Sortie · build 1</span><span>No network · runs from files</span></div>
+  </div>
+
+  <div id="debrief" class="screen hidden">
+    <div class="veil"></div>
+    <div class="debrief">
+      <div class="sub" id="dbrk">sortie complete</div>
+      <h2 id="dbtitle">Ridge Run</h2>
+      <div class="rows" id="dbrows"></div>
+      <button class="go" id="againBtn">Fly again <kbd>R</kbd></button>
+    </div>
+  </div>
+
+  <div id="pause" class="screen hidden">
+    <div class="veil"></div>
+    <div class="pause">
+      <h2>Paused</h2>
+      <p>P to resume · Esc for the hangar</p>
+    </div>
+  </div>
+</div>
+<script type="importmap">
+  { "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
