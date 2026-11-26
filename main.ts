@@ -1,41 +1,95 @@
-// A working best-game-01 entry (Node 22, standard library only): the game is this directory's
-// game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
-// modules, no library and no network request), and the program hands it in. It copies game/ and
-// screenshots/ from beside this file to /output and writes /output/dossier.json, the summary the
-// judge reads, with the vendored make.fun library. A starting point, not a winner: Block Dodger, a
-// plain 2D canvas game where a paddle dodges falling blocks and catches coins, with a title screen,
-// score, lives and levels, game over and restart, flat colours and no sound. Build your own game
-// (any genre, any library you vendor under game/, or none), put your 3 or 4 PNG or JPEG screenshots
-// in screenshots/ (the first by name is the cover) and run it.
+// Kestrel Sortie — the entry program.
 //
-// Serve it locally with `node serve.ts`, then open http://localhost:8080.
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
+// The game itself is plain static files under game/: game/index.html plus the ES modules beside
+// it. This program does the hand-in: it stages game/ and screenshots/ where the grader reads
+// them, then writes dossier.json with the kit's library, so the judge gets the same bytes the
+// repository holds.
+//
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+//
+// Inside the grader MAKEFUN_OUTPUT_DIR is unset and /output is used instead.
 
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const repoRoot = fileURLToPath(new URL('.', import.meta.url));
+const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
-mkdirSync(out, { recursive: true });
-cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
-mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+// The gate's own caps. A file over one of them would be refused, so stop here with a sentence
+// rather than hand in something the scorer throws out.
+const LIMITS = {
+  textMaxBytes: 163840,
+  screenshots: { max: 4, max_bytes: 262144 },
+  gameMaxFiles: 993,
+  gameMaxBytes: 50331648,
+  gamePathMaxBytes: 1000,
+};
 
-// The scorer's own caps (reference/gate.json): only text_max_bytes shapes the bytes; the others refuse an entry the
-// scorer would refuse (more than 4 screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB of game
-// files, in all, or a path under game/ over 1000 bytes: game/ counts beside /output's own 1000-entry cap, its
-// screenshots/ and dossier.json).
-writeFileSync(
-  join(out, 'dossier.json'),
-  buildDossier(out, {
-    text_max_bytes: 163840,
-    screenshots: { max: 4, max_bytes: 262144 },
-    game_max_files: 993,
-    game_max_bytes: 50331648,
-    game_path_max_bytes: 1000,
-  }),
+function walk(dir) {
+  const out = [];
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    const info = statSync(full);
+    if (info.isDirectory()) out.push(...walk(full));
+    else out.push({ path: full, bytes: info.size });
+  }
+  return out;
+}
+
+function stage(source, destination) {
+  if (!existsSync(source)) return 0;
+  cpSync(source, destination, { recursive: true });
+  return walk(destination).length;
+}
+
+function assertWithinCaps() {
+  const gameDir = join(outputDir, 'game');
+  const files = walk(gameDir);
+  const bytes = files.reduce((sum, f) => sum + f.bytes, 0);
+  if (files.length > LIMITS.gameMaxFiles) {
+    throw new Error(`game/ holds ${files.length} files, over the gate's ${LIMITS.gameMaxFiles}`);
+  }
+  if (bytes > LIMITS.gameMaxBytes) {
+    throw new Error(`game/ is ${bytes} bytes, over the gate's ${LIMITS.gameMaxBytes}`);
+  }
+  for (const file of files) {
+    const path = relative(gameDir, file.path);
+    if (Buffer.byteLength(path) > LIMITS.gamePathMaxBytes) {
+      throw new Error(`game/${path} is too long a path for the gate`);
+    }
+  }
+  const shots = readdirSync(join(outputDir, 'screenshots'))
+    .filter((name) => /\.(png|jpe?g)$/i.test(name))
+    .map((name) => ({ name, bytes: statSync(join(outputDir, 'screenshots', name)).size }));
+  if (shots.length < 3 || shots.length > LIMITS.screenshots.max) {
+    throw new Error(`screenshots/ holds ${shots.length} images; the gate takes 3 or 4`);
+  }
+  for (const shot of shots) {
+    if (shot.bytes > LIMITS.screenshots.max_bytes) {
+      throw new Error(`screenshots/${shot.name} is ${shot.bytes} bytes, over the gate's 256 KiB`);
+    }
+  }
+  return { files: files.length, bytes, shots: shots.length };
+}
+
+mkdirSync(outputDir, { recursive: true });
+
+const gameFiles = stage(join(repoRoot, 'game'), join(outputDir, 'game'));
+const shotFiles = stage(join(repoRoot, 'screenshots'), join(outputDir, 'screenshots'));
+const caps = assertWithinCaps();
+
+const dossier = buildDossier(outputDir, {
+  text_max_bytes: LIMITS.textMaxBytes,
+  screenshots: LIMITS.screenshots,
+  game_max_files: LIMITS.gameMaxFiles,
+  game_max_bytes: LIMITS.gameMaxBytes,
+  game_path_max_bytes: LIMITS.gamePathMaxBytes,
+});
+writeFileSync(join(outputDir, 'dossier.json'), dossier);
+
+console.log(
+  `Kestrel Sortie staged: ${gameFiles} game files, ${shotFiles} screenshots ` +
+  `(${caps.bytes} bytes of game), dossier ${Buffer.byteLength(dossier)} bytes -> ${outputDir}`,
 );
